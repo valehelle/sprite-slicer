@@ -216,6 +216,11 @@
   function dropBackground(bytes, w, h, key) {
     const MATCH = 45
     const SOLID = 195
+    // How far from the key the fill may wander. Well below SOLID on purpose:
+    // SOLID is the top of the alpha ramp, and using it to decide where the
+    // fill may spread lets it walk through the creature — on a hot-pink sheet
+    // 96% of his pixels sat inside it and he was eaten from the inside out.
+    const FLOOD = 110
     const n = w * h
 
     const distance = new Uint8Array(n)
@@ -231,7 +236,7 @@
     const outside = new Uint8Array(n)
     const queue = []
     const push = (p) => {
-      if (outside[p] === 1 || distance[p] > SOLID) return
+      if (outside[p] === 1 || distance[p] > FLOOD) return
       outside[p] = 1
       queue.push(p)
     }
