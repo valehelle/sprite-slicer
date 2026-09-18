@@ -159,7 +159,7 @@
       </div>
       <div class="row">
         <button id="tween">In-betweens</button>
-        <button id="outline">Add outline</button>
+        <button id="outline">Close outline</button>
         <button id="recut" class="primary" disabled>Cut again</button>
       </div>
     </div>
@@ -180,6 +180,9 @@
         <span class="label">contrast</span>
         <input type="range" id="contrast" min="0.8" max="1.8" step="0.05" value="1.2" />
         <span class="num" id="contrastNum">1.2</span>
+        <span class="label">outline gaps</span>
+        <input type="range" id="outlineBelow" min="0" max="200" step="10" value="90" />
+        <span class="num" id="outlineBelowNum">90</span>
       </div>
     </div>
     <div class="row spread">
@@ -217,9 +220,9 @@
       <li>A flat background the creature never uses — magenta is the convention. It is read from the corners, so it does not need to be exactly #FF00FF.</li>
       <li>Clear gaps between frames and between rows. Frames that touch are found as one.</li>
       <li>The same number of frames in every row.</li>
-      <li>Its own dark outline, which pixel art normally has. <b>Add outline</b> is for art that has none —
-        on art that already has one it draws a second rim over the first, worked out afresh from every
-        frame, so it lands differently each time and flickers as the loop plays.</li>
+      <li>Its own dark outline, which pixel art normally has. <b>Close outline</b> darkens the edge only
+        where that outline has gone missing, so the rim runs all the way round without being thickened.
+        <b>Outline gaps</b> sets how light a pixel has to be to count as a gap.</li>
     </ul>
     <p class="note">
       Everything else is measured: where the rows sit, where each frame's edges are, and where the creature's
@@ -934,24 +937,29 @@
     }
 
     if (options.outline) {
+      // Drawn inside the silhouette, on the outermost ring of pixels, and only
+      // where the art has not already drawn one.
+      //
+      // The old pass put a ring *outside* instead, which was wrong twice over:
+      // on art that already had a rim it made a second one, and because it was
+      // worked out from the soft alpha left after the downscale it landed a
+      // pixel differently in every frame and crawled along the edge as the
+      // loop played. Working on the hard silhouette is the same answer every
+      // time, and skipping pixels that are already dark completes the gaps in
+      // the drawn outline instead of thickening it.
       const out = new Uint8ClampedArray(small)
+      const lit = (x, y) => x >= 0 && y >= 0 && x < dw && y < dh && small[(y * dw + x) * 4 + 3] === 255
       for (let y = 0; y < dh; y++) {
         for (let x = 0; x < dw; x++) {
           const p = (y * dw + x) * 4
-          if (small[p + 3] >= 32) continue
-          let r = 0, g = 0, b = 0, found = 0
-          for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
-            const nx = x + dx, ny = y + dy
-            if (nx < 0 || ny < 0 || nx >= dw || ny >= dh) continue
-            const q = (ny * dw + nx) * 4
-            if (small[q + 3] < 128) continue
-            r += small[q]; g += small[q + 1]; b += small[q + 2]; found++
-          }
-          if (found === 0) continue
-          out[p] = Math.round((r / found) * 0.3)
-          out[p + 1] = Math.round((g / found) * 0.3)
-          out[p + 2] = Math.round((b / found) * 0.28)
-          out[p + 3] = 255
+          if (small[p + 3] !== 255) continue
+          const onEdge = !lit(x - 1, y) || !lit(x + 1, y) || !lit(x, y - 1) || !lit(x, y + 1)
+          if (!onEdge) continue
+          const light = small[p] * 0.299 + small[p + 1] * 0.587 + small[p + 2] * 0.114
+          if (light <= options.outlineBelow) continue
+          out[p] = Math.round(small[p] * 0.3)
+          out[p + 1] = Math.round(small[p + 1] * 0.3)
+          out[p + 2] = Math.round(small[p + 2] * 0.28)
         }
       }
       small.set(out)
@@ -1066,6 +1074,7 @@
       colours: Number(el('colours').value),
       contrast: Number(el('contrast').value),
       outline: state.outline,
+      outlineBelow: Number(el('outlineBelow').value),
       tween: state.tween,
       tolerance: Number(el('tolerance').value),
       shave: Number(el('shave').value),
@@ -1339,6 +1348,7 @@
     ['shave', 'shaveNum', (v) => v + 'px'],
     ['tolerance', 'toleranceNum', (v) => (v > 0 ? '+' : '') + v],
     ['contrast', 'contrastNum', (v) => v],
+    ['outlineBelow', 'outlineBelowNum', (v) => v],
   ]) {
     el(id).addEventListener('input', (event) => { el(label).textContent = format(event.target.value) })
     el(id).addEventListener('change', run)
