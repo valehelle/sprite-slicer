@@ -183,6 +183,9 @@
         <span class="label">outline gaps</span>
         <input type="range" id="outlineBelow" min="0" max="200" step="10" value="90" />
         <span class="num" id="outlineBelowNum">90</span>
+        <span class="label">specks</span>
+        <input type="range" id="despeckle" min="0" max="400" step="20" value="40" />
+        <span class="num" id="despeckleNum">40</span>
       </div>
     </div>
     <div class="row spread">
@@ -223,6 +226,9 @@
       <li>Its own dark outline, which pixel art normally has. <b>Close outline</b> darkens the edge only
         where that outline has gone missing, so the rim runs all the way round without being thickened.
         <b>Outline gaps</b> sets how light a pixel has to be to count as a gap.</li>
+      <li><b>Specks</b> — the smallest island of pixels to keep. Keying leaves crumbs adrift from the
+        creature, outside its outline, and they wink in and out as the frames change. Raise it to sweep
+        harder; drop it to 0 if something genuinely detached, like a trailing wisp, is disappearing.</li>
     </ul>
     <p class="note">
       Everything else is measured: where the rows sit, where each frame's edges are, and where the creature's
@@ -432,6 +438,42 @@
           bytes[i + 2] = Math.round(b / found)
         }
       }
+    }
+  }
+
+  /**
+   * Removes anything adrift from the creature.
+   *
+   * Keying leaves crumbs: a few pixels of a feather tip the edge band cut
+   * loose, a fleck of shading the artist put a hair away from the body. They
+   * are not part of the silhouette and they sit outside its outline, so they
+   * read as dirt on the sheet — and being small, they wink in and out as the
+   * frames change.
+   *
+   * Anything smaller than `smallest` goes. Generous by default, because a
+   * creature's genuinely detached parts — the wind a larva rides, a trailing
+   * feather — are far bigger than a crumb and have to survive.
+   */
+  function despeckle(bytes, w, h, smallest) {
+    const seen = new Uint8Array(w * h)
+    const lit = (p) => bytes[p * 4 + 3] === 255
+    for (let start = 0; start < w * h; start++) {
+      if (seen[start] === 1 || !lit(start)) continue
+      const blob = []
+      const queue = [start]
+      seen[start] = 1
+      while (queue.length > 0) {
+        const p = queue.pop()
+        blob.push(p)
+        const x = p % w
+        const near = (q) => { if (seen[q] === 1 || !lit(q)) return; seen[q] = 1; queue.push(q) }
+        if (x > 0) near(p - 1)
+        if (x < w - 1) near(p + 1)
+        if (p >= w) near(p - w)
+        if (p < w * (h - 1)) near(p + w)
+      }
+      if (blob.length >= smallest) continue
+      for (const p of blob) bytes[p * 4 + 3] = 0
     }
   }
 
@@ -850,6 +892,8 @@
 
     const key = options.key ?? guessKey(bytes, w, h)
     dropBackground(bytes, w, h, key, options.tolerance, options.shave)
+    // Before anything looks for frames, so crumbs cannot be taken for one.
+    if (options.despeckle > 0) despeckle(bytes, w, h, options.despeckle)
 
     const bands = rowBands(bytes, w, h)
     if (bands.length === 0) throw new Error('No rows found. Is the background one flat colour?')
@@ -937,24 +981,16 @@
     }
 
     if (options.outline) {
-      // Drawn inside the silhouette, on the outermost ring of pixels, and only
-      // where the art has not already drawn one.
-      //
-      // The old pass put a ring *outside* instead, which was wrong twice over:
-      // on art that already had a rim it made a second one, and because it was
-      // worked out from the soft alpha left after the downscale it landed a
-      // pixel differently in every frame and crawled along the edge as the
-      // loop played. Working on the hard silhouette is the same answer every
-      // time, and skipping pixels that are already dark completes the gaps in
-      // the drawn outline instead of thickening it.
+      // Drawn inside the silhouette, on its outermost ring, and only where the
+      // art has not already drawn one — so the rim is completed where it went
+      // missing and never thickened where it is already there.
       const out = new Uint8ClampedArray(small)
       const lit = (x, y) => x >= 0 && y >= 0 && x < dw && y < dh && small[(y * dw + x) * 4 + 3] === 255
       for (let y = 0; y < dh; y++) {
         for (let x = 0; x < dw; x++) {
           const p = (y * dw + x) * 4
           if (small[p + 3] !== 255) continue
-          const onEdge = !lit(x - 1, y) || !lit(x + 1, y) || !lit(x, y - 1) || !lit(x, y + 1)
-          if (!onEdge) continue
+          if (lit(x - 1, y) && lit(x + 1, y) && lit(x, y - 1) && lit(x, y + 1)) continue
           const light = small[p] * 0.299 + small[p + 1] * 0.587 + small[p + 2] * 0.114
           if (light <= options.outlineBelow) continue
           out[p] = Math.round(small[p] * 0.3)
@@ -1075,6 +1111,7 @@
       contrast: Number(el('contrast').value),
       outline: state.outline,
       outlineBelow: Number(el('outlineBelow').value),
+      despeckle: Number(el('despeckle').value),
       tween: state.tween,
       tolerance: Number(el('tolerance').value),
       shave: Number(el('shave').value),
@@ -1349,6 +1386,7 @@
     ['tolerance', 'toleranceNum', (v) => (v > 0 ? '+' : '') + v],
     ['contrast', 'contrastNum', (v) => v],
     ['outlineBelow', 'outlineBelowNum', (v) => v],
+    ['despeckle', 'despeckleNum', (v) => v],
   ]) {
     el(id).addEventListener('input', (event) => { el(label).textContent = format(event.target.value) })
     el(id).addEventListener('change', run)
