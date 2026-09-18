@@ -51,6 +51,7 @@
   button:disabled { opacity: 0.45; cursor: default; }
   input[type="number"] { width: 68px; }
   input[type="range"] { accent-color: var(--accent); width: 120px; }
+  input[type="color"] { width: 34px; height: 28px; padding: 2px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-2); cursor: pointer; }
   .num { font-family: var(--mono); font-size: 12px; color: var(--dim); min-width: 46px; }
   .swatch { width: 26px; height: 26px; border-radius: 6px; padding: 0; border: 1px solid var(--line); }
   .swatch.on { border: 2px solid var(--accent); }
@@ -136,6 +137,25 @@
         <button id="recut" class="primary" disabled>Cut again</button>
       </div>
     </div>
+
+    <div class="row spread">
+      <div class="row">
+        <span class="label">remove</span>
+        <input type="color" id="keyColour" value="#ff00ff" title="The background colour to key out" />
+        <button id="keyAuto" class="on">Auto</button>
+        <span class="label">edge</span>
+        <input type="range" id="shave" min="0" max="3" step="1" value="1" />
+        <span class="num" id="shaveNum">1px</span>
+      </div>
+      <div class="row">
+        <span class="label">keying</span>
+        <input type="range" id="tolerance" min="-60" max="60" step="5" value="0" />
+        <span class="num" id="toleranceNum">0</span>
+        <span class="label">contrast</span>
+        <input type="range" id="contrast" min="0.8" max="1.8" step="0.05" value="1.2" />
+        <span class="num" id="contrastNum">1.2</span>
+      </div>
+    </div>
     <div class="row spread">
       <div class="row">
         <span class="label">ground</span>
@@ -179,6 +199,19 @@
       Everything else is measured: where the rows sit, where each frame's edges are, and where the creature's
       body is so the frames line up instead of shuffling. If a row cannot be cut, it says which one and why.
     </p>
+    <p class="note"><b>When the measuring gets it wrong</b></p>
+    <ul class="note">
+      <li><b>Remove</b> — the background colour, read off the corners. Turn <b>Auto</b> off and pick it by
+        hand when a sheet has something in its corners, or when the background is not quite flat.</li>
+      <li><b>Keying</b> — how far from that colour still counts as background. Push it up if a haze of
+        background survives around the creature; pull it down if the creature is being eaten.</li>
+      <li><b>Edge</b> — how many pixels to shave off all the way round. Between the background and the
+        creature lies the band where the art was blended into the key, and no colour test separates it.
+        One pixel usually takes it. Raise it if the edge looks dirty, drop it to 0 if thin details like a
+        wisp of wind are disappearing.</li>
+      <li><b>Contrast</b> — spreads the shading apart. Generated art tends to sit in one band of mid-tones
+        where hand-drawn pixel art runs from near-white to near-black.</li>
+    </ul>
   </section>
 </div>
 
@@ -250,7 +283,7 @@
    * survives instead of being punched through. And the key's cast is pulled
    * out of what remains, or an orange creature on magenta keeps a violet rim.
    */
-  function dropBackground(bytes, w, h, key) {
+  function dropBackground(bytes, w, h, key, tolerance = 0, shave = 1) {
     const MATCH = 45
     const n = w * h
 
@@ -264,7 +297,9 @@
       ))
     }
 
-    const FLOOD = splitAtKey(distance)
+    // Otsu decides where the background ends; `tolerance` nudges that by hand
+    // for the sheets where it guesses a little shy or a little greedy.
+    const FLOOD = Math.max(4, Math.min(240, splitAtKey(distance) + tolerance))
     const outside = new Uint8Array(n)
     const queue = []
     const push = (p) => {
@@ -292,20 +327,29 @@
     // band is a thread lying against the background, the creature is a mass.
     // Shaving a pixel takes the thread and costs nothing, because the outline
     // pass draws the edge back in afterwards.
-    const shaved = new Uint8Array(outside)
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const p = y * w + x
-        if (outside[p] === 1) continue
-        const touches =
-          (x > 0 && outside[p - 1] === 1) ||
-          (x < w - 1 && outside[p + 1] === 1) ||
-          (y > 0 && outside[p - w] === 1) ||
-          (y < h - 1 && outside[p + w] === 1)
-        if (touches) shaved[p] = 1
+    // Marked apart from the fill, because a shaved pixel is gone outright. Put
+    // through the alpha ramp with the rest it would come back fully opaque —
+    // it is far from the key, that being the whole reason no colour test could
+    // separate it — and the shave would quietly do nothing at all.
+    const cut = new Uint8Array(n)
+    for (let pass = 0; pass < shave; pass++) {
+      const edge = []
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const p = y * w + x
+          if (outside[p] === 1 || cut[p] === 1) continue
+          const gone = (q) => outside[q] === 1 || cut[q] === 1
+          const touches =
+            (x > 0 && gone(p - 1)) ||
+            (x < w - 1 && gone(p + 1)) ||
+            (y > 0 && gone(p - w)) ||
+            (y < h - 1 && gone(p + w))
+          if (touches) edge.push(p)
+        }
       }
+      for (const p of edge) cut[p] = 1
     }
-    outside.set(shaved)
+    for (let p = 0; p < n; p++) if (cut[p] === 1) bytes[p * 4 + 3] = 0
 
     for (let p = 0; p < n; p++) {
       if (outside[p] !== 1) continue
@@ -653,8 +697,8 @@
     const w = image.width
     const h = image.height
 
-    const key = guessKey(bytes, w, h)
-    dropBackground(bytes, w, h, key)
+    const key = options.key ?? guessKey(bytes, w, h)
+    dropBackground(bytes, w, h, key, options.tolerance, options.shave)
 
     const bands = rowBands(bytes, w, h)
     if (bands.length === 0) throw new Error('No rows found. Is the background one flat colour?')
@@ -805,7 +849,7 @@
   }
 
   const el = (id) => document.getElementById(id)
-  const state = { image: null, result: null, bg: '#3f6b32', fps: 4, zoom: 3, outline: false, tick: 0, held: [] }
+  const state = { image: null, result: null, bg: '#3f6b32', fps: 4, zoom: 3, outline: false, autoKey: true, tick: 0, held: [] }
 
   const say = (text, kind = '') => {
     el('status').textContent = text
@@ -817,9 +861,22 @@
       frames: Number(el('frames').value),
       standHeight: Number(el('height').value),
       colours: Number(el('colours').value),
-      contrast: 1.2,
+      contrast: Number(el('contrast').value),
       outline: state.outline,
+      tolerance: Number(el('tolerance').value),
+      shave: Number(el('shave').value),
+      // Null means read it off the corners; a colour means use this exactly.
+      key: state.autoKey ? null : hexToRgb(el('keyColour').value),
     }
+  }
+
+  function hexToRgb(hex) {
+    const n = parseInt(hex.slice(1), 16)
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+  }
+
+  function rgbToHex(rgb) {
+    return '#' + rgb.map((v) => v.toString(16).padStart(2, '0')).join('')
   }
 
   function run() {
@@ -834,6 +891,8 @@
         const { atlas, key } = state.result
         el('meta').textContent =
           `${state.image.width}×${state.image.height} · key ${key.join(',')} · cell ${atlas.cellWidth}×${atlas.cellHeight}`
+        // So the picker shows what was found, ready to be overridden.
+        if (state.autoKey) el('keyColour').value = rgbToHex(key)
         say(`${atlas.rows.length} rows, ${atlas.rows.length * atlas.columns} frames, ${took}ms`, 'good')
         el('savePng').disabled = false
         el('saveJson').disabled = false
@@ -1064,6 +1123,24 @@
   for (const id of ['frames', 'height', 'colours']) {
     el(id).addEventListener('change', run)
   }
+  for (const [id, label, format] of [
+    ['shave', 'shaveNum', (v) => v + 'px'],
+    ['tolerance', 'toleranceNum', (v) => (v > 0 ? '+' : '') + v],
+    ['contrast', 'contrastNum', (v) => v],
+  ]) {
+    el(id).addEventListener('input', (event) => { el(label).textContent = format(event.target.value) })
+    el(id).addEventListener('change', run)
+  }
+  el('keyColour').addEventListener('input', () => {
+    state.autoKey = false
+    el('keyAuto').classList.remove('on')
+  })
+  el('keyColour').addEventListener('change', run)
+  el('keyAuto').addEventListener('click', (event) => {
+    state.autoKey = !state.autoKey
+    event.currentTarget.classList.toggle('on', state.autoKey)
+    run()
+  })
   el('fps').addEventListener('input', (event) => {
     state.fps = Number(event.target.value)
     el('fpsNum').textContent = state.fps + ' fps'
