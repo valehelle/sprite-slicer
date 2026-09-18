@@ -1,0 +1,994 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sprite Slicer</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --ink: #edeae3;
+    --dim: #9a958a;
+    --faint: #6a655c;
+    --ground: #17191a;
+    --panel: #212425;
+    --panel-2: #191c1d;
+    --line: #323639;
+    --accent: #f0a132;
+    --accent-ink: #1a1408;
+    --good: #7fc06a;
+    --bad: #e2705a;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  .wrap { max-width: 1000px; margin: 0 auto; padding-inline: 16px; padding-block: 26px 72px; display: flex; flex-direction: column; gap: 18px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+  h1 { font-size: 21px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+  .sub { color: var(--dim); font-size: 13px; margin: 0; }
+  .meta { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-left: auto; }
+
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .row.spread { justify-content: space-between; }
+  .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--faint); }
+
+  button, input[type="number"], input[type="text"] {
+    font: inherit; font-size: 13px; color: var(--ink);
+    background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 7px; padding: 6px 10px;
+  }
+  button { cursor: pointer; }
+  button:hover { border-color: #4a4f52; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  button.primary { background: var(--good); border-color: var(--good); color: #10240b; font-weight: 600; }
+  button:disabled { opacity: 0.45; cursor: default; }
+  input[type="number"] { width: 68px; }
+  input[type="range"] { accent-color: var(--accent); width: 120px; }
+  .num { font-family: var(--mono); font-size: 12px; color: var(--dim); min-width: 46px; }
+  .swatch { width: 26px; height: 26px; border-radius: 6px; padding: 0; border: 1px solid var(--line); }
+  .swatch.on { border: 2px solid var(--accent); }
+
+  .drop {
+    border: 1px dashed var(--line); border-radius: 10px;
+    padding: 34px 20px; text-align: center; color: var(--dim);
+  }
+  .drop.over { border-color: var(--accent); color: var(--ink); background: #1e2426; }
+  .drop b { color: var(--ink); font-weight: 600; }
+  .drop label { text-decoration: underline; cursor: pointer; }
+
+  .rowcard { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .rowhead { padding: 11px 14px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--line); }
+  .rowhead h2 { font-size: 14px; margin: 0; font-weight: 620; }
+  .rowhead .tag { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+  .rowbody { display: flex; gap: 14px; padding: 14px; align-items: center; flex-wrap: wrap; }
+  .play { display: grid; place-items: center; border-radius: 8px; padding: 8px; }
+  .strip { display: flex; gap: 6px; overflow-x: auto; flex: 1; min-width: 200px; }
+  .strip canvas { border-radius: 4px; }
+  canvas { image-rendering: pixelated; display: block; }
+
+  .refTitle { font-size: 14px; margin: 0; font-weight: 620; }
+  #refPanel { border-color: #3d4a34; }
+  .status { font-family: var(--mono); font-size: 12.5px; }
+  .status.bad { color: var(--bad); }
+  .status.good { color: var(--good); }
+  .note { margin: 0; color: var(--faint); font-size: 12.5px; max-width: 70ch; }
+  .note b { color: var(--dim); font-weight: 600; }
+  ul.note { padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Sprite Slicer</h1>
+    <p class="sub">Drop a generated sheet in. Watch it move.</p>
+    <span class="meta" id="meta"></span>
+  </header>
+
+  <section class="panel" id="refPanel">
+    <div class="row spread">
+      <div class="row">
+        <span class="label">for comparison</span>
+        <h2 class="refTitle">Ragnarok Online — Desert Wolf, standing</h2>
+      </div>
+      <span class="num">5 frames · 62px tall</span>
+    </div>
+    <div class="row" style="align-items: flex-start; gap: 14px;">
+      <div class="play" id="refPlay"><canvas id="refLive"></canvas></div>
+      <div class="strip" id="refStrip"></div>
+    </div>
+    <p class="note">
+      This is what you are aiming at: the body holds still and the legs and head carry the movement. Match the
+      speed slider to it, then compare against your own rows below — if yours changes shape everywhere at once,
+      that is the art, not the cut.
+    </p>
+  </section>
+
+  <div class="drop" id="drop">
+    <b>Drop a sprite sheet here</b><br />
+    or <label>choose a file<input type="file" id="file" accept="image/*" hidden /></label>
+  </div>
+
+  <section class="panel">
+    <div class="row spread">
+      <div class="row">
+        <span class="label">frames per row</span>
+        <input type="number" id="frames" value="6" min="1" max="24" />
+        <span class="label">sprite height</span>
+        <input type="number" id="height" value="80" min="16" max="400" />
+        <span class="label">colours</span>
+        <input type="number" id="colours" value="32" min="4" max="256" />
+      </div>
+      <div class="row">
+        <button id="outline" class="on">Outline</button>
+        <button id="recut" class="primary" disabled>Cut again</button>
+      </div>
+    </div>
+    <div class="row spread">
+      <div class="row">
+        <span class="label">ground</span>
+        <button class="swatch on" data-bg="#3f6b32" style="background:#3f6b32" title="Glade grass"></button>
+        <button class="swatch" data-bg="#1d2a18" style="background:#1d2a18" title="Deep shade"></button>
+        <button class="swatch" data-bg="#8fa87d" style="background:#8fa87d" title="Sunlit grass"></button>
+        <button class="swatch" data-bg="#17191a" style="background:#17191a" title="Neutral"></button>
+        <button class="swatch" data-bg="#e9e6df" style="background:#e9e6df" title="Paper"></button>
+      </div>
+      <div class="row">
+        <span class="label">speed</span>
+        <input type="range" id="fps" min="0.5" max="12" step="0.5" value="4" />
+        <span class="num" id="fpsNum">4 fps</span>
+        <span class="label">zoom</span>
+        <input type="range" id="zoom" min="1" max="6" step="1" value="3" />
+        <span class="num" id="zoomNum">3×</span>
+      </div>
+    </div>
+    <div class="row spread">
+      <span class="status" id="status"></span>
+      <div class="row">
+        <button id="savePng" disabled>Save sheet PNG</button>
+        <button id="saveJson" disabled>Save atlas JSON</button>
+      </div>
+    </div>
+  </section>
+
+  <div id="rows"></div>
+
+  <section class="panel">
+    <p class="note"><b>What the sheet needs</b></p>
+    <ul class="note">
+      <li>A flat background the creature never uses — magenta is the convention. It is read from the corners, so it does not need to be exactly #FF00FF.</li>
+      <li>Clear gaps between frames and between rows. Frames that touch are found as one.</li>
+      <li>The same number of frames in every row.</li>
+    </ul>
+    <p class="note">
+      Everything else is measured: where the rows sit, where each frame's edges are, and where the creature's
+      body is so the frames line up instead of shuffling. If a row cannot be cut, it says which one and why.
+    </p>
+  </section>
+</div>
+
+<script>
+(() => {
+  'use strict'
+
+  /* ------------------------------------------------------------------ *
+   * The pipeline, the same one that runs on the command line.
+   * ------------------------------------------------------------------ */
+
+  const MIN_FRAME_WIDTH = 16
+  const PADDING = 6
+
+  /**
+   * The background colour, read off the four corners.
+   *
+   * A sheet that has been through JPEG never has a clean key — the magenta
+   * comes back as something like 237,3,249 — so assuming the colour keys
+   * nothing. The corners are the one place all sheets agree.
+   */
+  function guessKey(data, w, h) {
+    const at = (x, y) => {
+      const i = (y * w + x) * 4
+      return [data[i], data[i + 1], data[i + 2]]
+    }
+    const corners = [at(2, 2), at(w - 3, 2), at(2, h - 3), at(w - 3, h - 3)]
+    const mid = (c) => {
+      const v = corners.map((k) => k[c]).sort((a, b) => a - b)
+      return Math.round((v[1] + v[2]) / 2)
+    }
+    return [mid(0), mid(1), mid(2)]
+  }
+
+  /**
+   * Clears the background and cleans up what it leaves behind.
+   *
+   * Three things happen, and all three matter. Alpha ramps with distance from
+   * the key so the drawn edge stays soft. The clearing only spreads inward
+   * from the border, so a pale area enclosed by the creature — a cream chest —
+   * survives instead of being punched through. And the key's cast is pulled
+   * out of what remains, or an orange creature on magenta keeps a violet rim.
+   */
+  function dropBackground(bytes, w, h, key) {
+    const MATCH = 45
+    const SOLID = 195
+    const n = w * h
+
+    const distance = new Uint8Array(n)
+    for (let p = 0; p < n; p++) {
+      const i = p * 4
+      distance[p] = Math.min(255, Math.max(
+        Math.abs(bytes[i] - key[0]),
+        Math.abs(bytes[i + 1] - key[1]),
+        Math.abs(bytes[i + 2] - key[2]),
+      ))
+    }
+
+    const outside = new Uint8Array(n)
+    const queue = []
+    const push = (p) => {
+      if (outside[p] === 1 || distance[p] > SOLID) return
+      outside[p] = 1
+      queue.push(p)
+    }
+    for (let x = 0; x < w; x++) { push(x); push((h - 1) * w + x) }
+    for (let y = 0; y < h; y++) { push(y * w); push(y * w + w - 1) }
+    while (queue.length > 0) {
+      const p = queue.pop()
+      const x = p % w
+      if (x > 0) push(p - 1)
+      if (x < w - 1) push(p + 1)
+      if (p >= w) push(p - w)
+      if (p < w * (h - 1)) push(p + w)
+    }
+
+    for (let p = 0; p < n; p++) {
+      if (outside[p] !== 1) continue
+      const d = distance[p]
+      const alpha = d <= MATCH ? 0 : Math.round(((d - MATCH) / (SOLID - MATCH)) * 255)
+      const i = p * 4
+      bytes[i + 3] = Math.min(bytes[i + 3], alpha)
+    }
+
+    // De-spill. Magenta shows as blue rising above green on a warm creature;
+    // pulling it all the way back is what stops a translucent effect drawn
+    // over the key — a wind swirl — coming through pink.
+    for (let i = 0; i < bytes.length; i += 4) {
+      if (bytes[i + 3] === 0) continue
+      const r = bytes[i], g = bytes[i + 1], b = bytes[i + 2]
+      if (key[0] > 200 && key[1] < 60 && key[2] > 200 && b > g) bytes[i + 2] = g
+      if (key[1] > 200 && key[0] < 60 && key[2] < 60 && g > Math.max(r, b)) bytes[i + 1] = Math.max(r, b)
+    }
+
+    bleedEdges(bytes, w, h)
+  }
+
+  /**
+   * Grows the creature's colours outward into the cleared area.
+   *
+   * Keying only changes alpha; the pixels just outside the edge still hold the
+   * background's colour. Invisible while transparent — but the moment the
+   * sheet is scaled down that colour is averaged back in, and the creature
+   * ends up ringed in a pale halo.
+   */
+  function bleedEdges(bytes, w, h) {
+    for (let pass = 0; pass < 4; pass++) {
+      const source = new Uint8ClampedArray(bytes)
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4
+          if (source[i + 3] >= 250) continue
+          let r = 0, g = 0, b = 0, found = 0
+          for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+            const nx = x + dx, ny = y + dy
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue
+            const q = (ny * w + nx) * 4
+            if (source[q + 3] < 250) continue
+            r += source[q]; g += source[q + 1]; b += source[q + 2]; found++
+          }
+          if (found === 0) continue
+          bytes[i] = Math.round(r / found)
+          bytes[i + 1] = Math.round(g / found)
+          bytes[i + 2] = Math.round(b / found)
+        }
+      }
+    }
+  }
+
+  const opaque = (bytes, w, x, y) => bytes[(y * w + x) * 4 + 3] >= 8
+
+  /**
+   * The horizontal bands the rows of frames sit in.
+   *
+   * A row of frames covers a good share of the sheet's width; the caption
+   * printed with it covers a sliver. Counting pixels rather than asking
+   * whether the row has any is what keeps captions from stretching a band.
+   */
+  function rowBands(bytes, w, h) {
+    const minFill = Math.max(4, Math.round(w * 0.02))
+    const filled = []
+    for (let y = 0; y < h; y++) {
+      let count = 0
+      for (let x = 0; x < w; x++) if (opaque(bytes, w, x, y)) count++
+      filled.push(count >= minFill)
+    }
+    // Close gaps too small to be a real separation, so a creature with a thin
+    // waist does not come back as two rows.
+    for (let i = 0; i < filled.length; i++) {
+      if (filled[i]) continue
+      let end = i
+      while (end < filled.length && !filled[end]) end++
+      if (i !== 0 && end !== filled.length && end - i < 8) {
+        for (let k = i; k < end; k++) filled[k] = true
+      }
+      i = end - 1
+    }
+    const bands = []
+    let start = null
+    for (let i = 0; i <= filled.length; i++) {
+      const here = i < filled.length && filled[i]
+      if (here && start === null) start = i
+      else if (!here && start !== null) {
+        if (i - start >= 24) bands.push({ top: Math.max(0, start - 2), bottom: Math.min(h - 1, i + 1) })
+        start = null
+      }
+    }
+    return bands
+  }
+
+  /** Runs of columns holding enough of the band's height to be a frame. */
+  function columnRuns(bytes, w, band, minFill) {
+    const runs = []
+    let start = null
+    for (let x = 0; x < w; x++) {
+      let count = 0
+      for (let y = band.top; y <= band.bottom; y++) if (opaque(bytes, w, x, y)) count++
+      const here = count >= minFill
+      if (here && start === null) start = x
+      else if (!here && start !== null) {
+        if (x - start >= MIN_FRAME_WIDTH) runs.push({ start, end: x - 1 })
+        start = null
+      }
+    }
+    if (start !== null && w - start >= MIN_FRAME_WIDTH) runs.push({ start, end: w - 1 })
+    return runs
+  }
+
+  /**
+   * Forces the run count to match the frame count.
+   *
+   * Hand-drawn sheets are never quite a grid. Two frames that touch come back
+   * as one wide run; one frame with a gap inside it — between a creature and
+   * the wind it trails — comes back as two narrow ones.
+   */
+  function fitRuns(runs, want) {
+    const list = runs.map((r) => ({ ...r }))
+    let guard = 0
+    while (list.length > want && guard++ < 200) {
+      let best = 0
+      for (let i = 1; i < list.length - 1; i++) {
+        const widthOf = (r) => r.end - r.start
+        if (widthOf(list[i]) < widthOf(list[best])) best = i
+      }
+      const left = list[best - 1]
+      const right = list[best + 1]
+      const target = left === undefined ? best + 1
+        : right === undefined ? best - 1
+        : (list[best].start - left.end) <= (right.start - list[best].end) ? best - 1 : best + 1
+      const merged = {
+        start: Math.min(list[best].start, list[target].start),
+        end: Math.max(list[best].end, list[target].end),
+      }
+      list.splice(Math.min(best, target), 2, merged)
+    }
+    while (list.length < want && guard++ < 200) {
+      let widest = 0
+      for (let i = 1; i < list.length; i++) {
+        if (list[i].end - list[i].start > list[widest].end - list[widest].start) widest = i
+      }
+      const run = list[widest]
+      const mid = Math.round((run.start + run.end) / 2)
+      list.splice(widest, 1, { start: run.start, end: mid }, { start: mid + 1, end: run.end })
+    }
+    return list
+  }
+
+  /** The tightest box around what is drawn inside a region. */
+  function contentBox(bytes, w, left, top, right, bottom) {
+    let minX = Infinity, minY = Infinity, maxX = -1, maxY = -1
+    for (let y = top; y <= bottom; y++) {
+      for (let x = left; x <= right; x++) {
+        if (!opaque(bytes, w, x, y)) continue
+        if (x < minX) minX = x
+        if (x > maxX) maxX = x
+        if (y < minY) minY = y
+        if (y > maxY) maxY = y
+      }
+    }
+    return maxX < 0 ? null : { left: minX, top: minY, right: maxX, bottom: maxY }
+  }
+
+  /** The lowest substantial row: the soles, ignoring anything dangling below. */
+  function feetBottom(bytes, w, box) {
+    const span = box.right - box.left + 1
+    const need = Math.max(2, Math.round(span * 0.12))
+    for (let y = box.bottom; y >= box.top; y--) {
+      let count = 0
+      for (let x = box.left; x <= box.right; x++) if (opaque(bytes, w, x, y)) count++
+      if (count >= need) return y
+    }
+    return box.bottom
+  }
+
+  /**
+   * The horizontal centre of the creature's body.
+   *
+   * Not its feet: for anything on four legs the feet are the part that moves,
+   * so anchoring there makes the animal slide to cancel out its own footsteps.
+   * Not its bounding box either, which a swinging weapon drags around. The
+   * torso stays put through both.
+   */
+  function bodyCentreX(bytes, w, box) {
+    const soles = feetBottom(bytes, w, box)
+    const span = soles - box.top
+    const top = Math.round(box.top + span * 0.25)
+    const bottom = Math.max(top, Math.round(box.top + span * 0.6))
+    let sum = 0, count = 0
+    for (let y = top; y <= bottom; y++) {
+      for (let x = box.left; x <= box.right; x++) {
+        if (!opaque(bytes, w, x, y)) continue
+        sum += x + 0.5
+        count++
+      }
+    }
+    return count === 0 ? (box.left + box.right + 1) / 2 : sum / count
+  }
+
+  /**
+   * Lanczos resample, premultiplied.
+   *
+   * The browser's own scaling is bilinear, which turns pixel art to mush on
+   * the way down. Premultiplying first is what stops the transparent pixels
+   * around the edge dragging their colour into the silhouette.
+   */
+  function resample(src, sw, sh, dw, dh) {
+    const pm = new Float32Array(sw * sh * 4)
+    for (let i = 0; i < sw * sh; i++) {
+      const a = src[i * 4 + 3] / 255
+      pm[i * 4] = src[i * 4] * a
+      pm[i * 4 + 1] = src[i * 4 + 1] * a
+      pm[i * 4 + 2] = src[i * 4 + 2] * a
+      pm[i * 4 + 3] = src[i * 4 + 3]
+    }
+
+    const lanczos = (x) => {
+      if (x === 0) return 1
+      const a = 3
+      if (x <= -a || x >= a) return 0
+      const px = Math.PI * x
+      return (a * Math.sin(px) * Math.sin(px / a)) / (px * px)
+    }
+
+    const pass = (input, inW, inH, outW) => {
+      const out = new Float32Array(outW * inH * 4)
+      const scale = outW / inW
+      const support = scale < 1 ? 3 / scale : 3
+      for (let x = 0; x < outW; x++) {
+        const centre = (x + 0.5) / scale - 0.5
+        const from = Math.max(0, Math.ceil(centre - support))
+        const to = Math.min(inW - 1, Math.floor(centre + support))
+        const weights = []
+        let total = 0
+        for (let s = from; s <= to; s++) {
+          const wv = lanczos(scale < 1 ? (s - centre) * scale : s - centre)
+          weights.push(wv)
+          total += wv
+        }
+        for (let y = 0; y < inH; y++) {
+          let r = 0, g = 0, b = 0, a = 0
+          for (let s = from; s <= to; s++) {
+            const wv = weights[s - from]
+            const i = (y * inW + s) * 4
+            r += input[i] * wv; g += input[i + 1] * wv; b += input[i + 2] * wv; a += input[i + 3] * wv
+          }
+          const o = (y * outW + x) * 4
+          out[o] = r / total; out[o + 1] = g / total; out[o + 2] = b / total; out[o + 3] = a / total
+        }
+      }
+      return out
+    }
+
+    const transpose = (input, w, h) => {
+      const out = new Float32Array(w * h * 4)
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4
+          const o = (x * h + y) * 4
+          out[o] = input[i]; out[o + 1] = input[i + 1]; out[o + 2] = input[i + 2]; out[o + 3] = input[i + 3]
+        }
+      }
+      return out
+    }
+
+    let stage = pass(pm, sw, sh, dw)
+    stage = transpose(stage, dw, sh)
+    stage = pass(stage, sh, dw, dh)
+    stage = transpose(stage, dh, dw)
+
+    const out = new Uint8ClampedArray(dw * dh * 4)
+    for (let i = 0; i < dw * dh; i++) {
+      const a = Math.max(0, Math.min(255, stage[i * 4 + 3]))
+      const k = a === 0 ? 0 : 255 / a
+      out[i * 4] = stage[i * 4] * k
+      out[i * 4 + 1] = stage[i * 4 + 1] * k
+      out[i * 4 + 2] = stage[i * 4 + 2] * k
+      out[i * 4 + 3] = a
+    }
+    return out
+  }
+
+  /**
+   * Snaps to exactly this many colours, by median cut.
+   *
+   * Flat colour is most of what separates a sprite from a shrunken painting.
+   */
+  function quantise(bytes, count) {
+    const opaqueAt = []
+    for (let i = 0; i < bytes.length; i += 4) if (bytes[i + 3] === 255) opaqueAt.push(i)
+    if (opaqueAt.length === 0) return
+
+    const buckets = [opaqueAt]
+    while (buckets.length < count) {
+      let target = -1, channel = 0, widest = 0
+      buckets.forEach((bucket, index) => {
+        if (bucket.length < 2) return
+        for (let c = 0; c < 3; c++) {
+          let low = 255, high = 0
+          for (const i of bucket) {
+            const v = bytes[i + c]
+            if (v < low) low = v
+            if (v > high) high = v
+          }
+          if (high - low > widest) { widest = high - low; target = index; channel = c }
+        }
+      })
+      if (target < 0) break
+      const bucket = buckets[target]
+      bucket.sort((a, b) => bytes[a + channel] - bytes[b + channel])
+      const half = Math.floor(bucket.length / 2)
+      buckets.splice(target, 1, bucket.slice(0, half), bucket.slice(half))
+    }
+
+    for (const bucket of buckets) {
+      let r = 0, g = 0, b = 0
+      for (const i of bucket) { r += bytes[i]; g += bytes[i + 1]; b += bytes[i + 2] }
+      const size = bucket.length || 1
+      const cr = Math.round(r / size), cg = Math.round(g / size), cb = Math.round(b / size)
+      for (const i of bucket) { bytes[i] = cr; bytes[i + 1] = cg; bytes[i + 2] = cb }
+    }
+  }
+
+  /** The whole cut, from a decoded image to an atlas. */
+  function slice(image, options) {
+    const work = document.createElement('canvas')
+    work.width = image.width
+    work.height = image.height
+    const wctx = work.getContext('2d', { willReadFrequently: true })
+    wctx.drawImage(image, 0, 0)
+    const full = wctx.getImageData(0, 0, image.width, image.height)
+    const bytes = full.data
+    const w = image.width
+    const h = image.height
+
+    const key = guessKey(bytes, w, h)
+    dropBackground(bytes, w, h, key)
+
+    const bands = rowBands(bytes, w, h)
+    if (bands.length === 0) throw new Error('No rows found. Is the background one flat colour?')
+
+    const rows = []
+    for (const [index, band] of bands.entries()) {
+      const minFill = Math.max(3, Math.round((band.bottom - band.top + 1) * 0.12))
+      const runs = fitRuns(columnRuns(bytes, w, band, minFill), options.frames)
+      if (runs.length !== options.frames) {
+        throw new Error(`Row ${index + 1} came out as ${runs.length} frames, not ${options.frames}.`)
+      }
+      const frames = runs.map((run) => {
+        const box = contentBox(bytes, w, run.start, band.top, run.end, band.bottom)
+        if (box === null) throw new Error(`Row ${index + 1} has an empty frame.`)
+        return { box, anchorX: bodyCentreX(bytes, w, box) - box.left, anchorY: feetBottom(bytes, w, box) - box.top }
+      })
+      rows.push({ name: `row ${index + 1}`, band, frames })
+    }
+
+    // Each extent is measured about the anchor, not about the frame's own box,
+    // because a frame can reach further on one side than the other.
+    let halfWidth = 0, above = 0, below = 0
+    for (const row of rows) {
+      for (const frame of row.frames) {
+        const fw = frame.box.right - frame.box.left + 1
+        const fh = frame.box.bottom - frame.box.top + 1
+        halfWidth = Math.max(halfWidth, frame.anchorX, fw - frame.anchorX)
+        above = Math.max(above, frame.anchorY)
+        below = Math.max(below, fh - 1 - frame.anchorY)
+      }
+    }
+    const anchorX = Math.ceil(halfWidth) + PADDING
+    const anchorY = Math.ceil(above) + PADDING
+    const cellWidth = anchorX * 2
+    const cellHeight = anchorY + Math.ceil(below) + PADDING
+    const standHeight = Math.max(...rows[0].frames.map((f) => f.anchorY + 1))
+
+    // Copied byte by byte rather than through a canvas.
+    //
+    // A canvas stores colour premultiplied by alpha, so any pixel that goes
+    // in semi-transparent comes back with its colour crushed toward black —
+    // and the edge of a keyed sprite is nothing but semi-transparent pixels.
+    // Drawn through a canvas the creature ends up wearing a black aura,
+    // because the outline pass then averages those blackened neighbours.
+    const sheetW = cellWidth * options.frames
+    const sheetH = cellHeight * rows.length
+    const sheetBytes = new Uint8ClampedArray(sheetW * sheetH * 4)
+
+    for (const [rowIndex, row] of rows.entries()) {
+      for (const [col, frame] of row.frames.entries()) {
+        const left = col * cellWidth + anchorX - Math.round(frame.anchorX)
+        const top = rowIndex * cellHeight + anchorY - Math.round(frame.anchorY)
+        for (let y = frame.box.top; y <= frame.box.bottom; y++) {
+          const dy = top + (y - frame.box.top)
+          if (dy < 0 || dy >= sheetH) continue
+          for (let x = frame.box.left; x <= frame.box.right; x++) {
+            const dx = left + (x - frame.box.left)
+            if (dx < 0 || dx >= sheetW) continue
+            const from = (y * w + x) * 4
+            if (bytes[from + 3] === 0) continue
+            const to = (dy * sheetW + dx) * 4
+            sheetBytes[to] = bytes[from]
+            sheetBytes[to + 1] = bytes[from + 1]
+            sheetBytes[to + 2] = bytes[from + 2]
+            sheetBytes[to + 3] = bytes[from + 3]
+          }
+        }
+      }
+    }
+
+    // Down to the size it is actually drawn at, and then made to look drawn
+    // rather than shrunk: contrast, a dark rim, hard alpha, flat colour.
+    const factor = options.standHeight / standHeight
+    const outCellW = Math.max(1, Math.round(cellWidth * factor))
+    const outCellH = Math.max(1, Math.round(cellHeight * factor))
+    const dw = outCellW * options.frames
+    const dh = outCellH * rows.length
+    const small = resample(sheetBytes, sheetW, sheetH, dw, dh)
+
+    const k = options.contrast
+    if (k !== 1) {
+      for (let i = 0; i < small.length; i += 4) {
+        for (let c = 0; c < 3; c++) small[i + c] = Math.round((small[i + c] - 128) * k + 128)
+      }
+    }
+
+    if (options.outline) {
+      const out = new Uint8ClampedArray(small)
+      for (let y = 0; y < dh; y++) {
+        for (let x = 0; x < dw; x++) {
+          const p = (y * dw + x) * 4
+          if (small[p + 3] >= 32) continue
+          let r = 0, g = 0, b = 0, found = 0
+          for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+            const nx = x + dx, ny = y + dy
+            if (nx < 0 || ny < 0 || nx >= dw || ny >= dh) continue
+            const q = (ny * dw + nx) * 4
+            if (small[q + 3] < 128) continue
+            r += small[q]; g += small[q + 1]; b += small[q + 2]; found++
+          }
+          if (found === 0) continue
+          out[p] = Math.round((r / found) * 0.3)
+          out[p + 1] = Math.round((g / found) * 0.3)
+          out[p + 2] = Math.round((b / found) * 0.28)
+          out[p + 3] = 255
+        }
+      }
+      small.set(out)
+    }
+
+    // Alpha goes hard last: partial transparency is what the palette step
+    // turns into white speckle, and the dark rim already carries the edge.
+    for (let i = 3; i < small.length; i += 4) small[i] = small[i] >= 110 ? 255 : 0
+    quantise(small, options.colours)
+
+    const final = document.createElement('canvas')
+    final.width = dw
+    final.height = dh
+    final.getContext('2d').putImageData(new ImageData(small, dw, dh), 0, 0)
+
+    return {
+      canvas: final,
+      key,
+      atlas: {
+        cellWidth: outCellW,
+        cellHeight: outCellH,
+        columns: options.frames,
+        rows: rows.map((row) => ({ name: row.name, frames: row.frames.length })),
+        anchorX: Math.round(anchorX * factor),
+        anchorY: Math.round(anchorY * factor),
+        standHeight: Math.round(standHeight * factor),
+      },
+      bands: rows.map((row) => row.band),
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * The page.
+   * ------------------------------------------------------------------ */
+
+  const REFERENCE = {
+    // A real Ragnarok sprite, cut by this same pipeline, kept here so there is
+    // always a known-good animation on screen to judge a new sheet against.
+    src: 'data:image/png;base64,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',
+    cellWidth: 134,
+    cellHeight: 107,
+    frames: 5,
+  }
+
+  const el = (id) => document.getElementById(id)
+  const state = { image: null, result: null, bg: '#3f6b32', fps: 4, zoom: 3, outline: true, tick: 0 }
+
+  const say = (text, kind = '') => {
+    el('status').textContent = text
+    el('status').className = 'status ' + kind
+  }
+
+  function options() {
+    return {
+      frames: Number(el('frames').value),
+      standHeight: Number(el('height').value),
+      colours: Number(el('colours').value),
+      contrast: 1.2,
+      outline: state.outline,
+    }
+  }
+
+  function run() {
+    if (state.image === null) return
+    say('cutting…')
+    // Let the status paint before the main thread is tied up.
+    setTimeout(() => {
+      try {
+        const started = performance.now()
+        state.result = slice(state.image, options())
+        const took = Math.round(performance.now() - started)
+        const { atlas, key } = state.result
+        el('meta').textContent =
+          `${state.image.width}×${state.image.height} · key ${key.join(',')} · cell ${atlas.cellWidth}×${atlas.cellHeight}`
+        say(`${atlas.rows.length} rows, ${atlas.rows.length * atlas.columns} frames, ${took}ms`, 'good')
+        el('savePng').disabled = false
+        el('saveJson').disabled = false
+        buildRows()
+      } catch (error) {
+        state.result = null
+        say(error.message, 'bad')
+        el('rows').textContent = ''
+        el('savePng').disabled = true
+        el('saveJson').disabled = true
+      }
+    }, 10)
+  }
+
+  function buildRows() {
+    const host = el('rows')
+    host.textContent = ''
+    const { atlas, canvas } = state.result
+    atlas.rows.forEach((row, index) => {
+      const card = document.createElement('section')
+      card.className = 'rowcard'
+
+      const head = document.createElement('div')
+      head.className = 'rowhead'
+      const title = document.createElement('h2')
+      title.textContent = row.name
+      const tag = document.createElement('span')
+      tag.className = 'tag'
+      tag.textContent = row.frames + ' frames · band ' + state.result.bands[index].top + '–' + state.result.bands[index].bottom
+      head.append(title, tag)
+
+      const body = document.createElement('div')
+      body.className = 'rowbody'
+
+      const play = document.createElement('div')
+      play.className = 'play'
+      play.style.background = state.bg
+      const live = document.createElement('canvas')
+      live.dataset.row = String(index)
+      live.className = 'live'
+      play.append(live)
+
+      const strip = document.createElement('div')
+      strip.className = 'strip'
+      for (let i = 0; i < row.frames; i++) {
+        const cell = document.createElement('canvas')
+        cell.width = atlas.cellWidth
+        cell.height = atlas.cellHeight
+        const ctx = cell.getContext('2d')
+        ctx.fillStyle = '#191c1d'
+        ctx.fillRect(0, 0, cell.width, cell.height)
+        ctx.drawImage(canvas, i * atlas.cellWidth, index * atlas.cellHeight, atlas.cellWidth, atlas.cellHeight, 0, 0, atlas.cellWidth, atlas.cellHeight)
+        cell.style.width = Math.round(atlas.cellWidth * 0.8) + 'px'
+        cell.style.height = Math.round(atlas.cellHeight * 0.8) + 'px'
+        strip.append(cell)
+      }
+
+      body.append(play, strip)
+      card.append(head, body)
+      host.append(card)
+    })
+    sizeLive()
+  }
+
+  function sizeLive() {
+    if (state.result === null) return
+    const { atlas } = state.result
+    for (const live of document.querySelectorAll('.live')) {
+      live.width = atlas.cellWidth * state.zoom
+      live.height = atlas.cellHeight * state.zoom
+      live.style.width = live.width + 'px'
+      live.style.height = live.height + 'px'
+      live.parentElement.style.background = state.bg
+    }
+    paint()
+  }
+
+  function paint() {
+    if (state.result === null) return
+    const { atlas, canvas } = state.result
+    for (const live of document.querySelectorAll('.live')) {
+      const index = Number(live.dataset.row)
+      const column = state.tick % atlas.columns
+      const ctx = live.getContext('2d')
+      ctx.imageSmoothingEnabled = false
+      ctx.clearRect(0, 0, live.width, live.height)
+      ctx.drawImage(
+        canvas,
+        column * atlas.cellWidth, index * atlas.cellHeight, atlas.cellWidth, atlas.cellHeight,
+        0, 0, atlas.cellWidth * state.zoom, atlas.cellHeight * state.zoom,
+      )
+    }
+  }
+
+  const reference = new Image()
+  reference.onload = () => {
+    const strip = el('refStrip')
+    for (let i = 0; i < REFERENCE.frames; i++) {
+      const cell = document.createElement('canvas')
+      cell.width = REFERENCE.cellWidth
+      cell.height = REFERENCE.cellHeight
+      const ctx = cell.getContext('2d')
+      ctx.fillStyle = '#191c1d'
+      ctx.fillRect(0, 0, cell.width, cell.height)
+      ctx.drawImage(reference, i * REFERENCE.cellWidth, 0)
+      cell.style.width = Math.round(REFERENCE.cellWidth * 0.8) + 'px'
+      cell.style.height = Math.round(REFERENCE.cellHeight * 0.8) + 'px'
+      strip.append(cell)
+    }
+    sizeReference()
+  }
+  reference.src = REFERENCE.src
+
+  function sizeReference() {
+    const live = el('refLive')
+    live.width = REFERENCE.cellWidth * state.zoom
+    live.height = REFERENCE.cellHeight * state.zoom
+    live.style.width = live.width + 'px'
+    live.style.height = live.height + 'px'
+    el('refPlay').style.background = state.bg
+    paintReference()
+  }
+
+  function paintReference() {
+    if (reference.complete === false) return
+    const live = el('refLive')
+    const ctx = live.getContext('2d')
+    ctx.imageSmoothingEnabled = false
+    ctx.clearRect(0, 0, live.width, live.height)
+    const column = state.tick % REFERENCE.frames
+    ctx.drawImage(
+      reference,
+      column * REFERENCE.cellWidth, 0, REFERENCE.cellWidth, REFERENCE.cellHeight,
+      0, 0, REFERENCE.cellWidth * state.zoom, REFERENCE.cellHeight * state.zoom,
+    )
+  }
+
+  let last = 0
+  function loop(now = 0) {
+    if (now - last > 1000 / state.fps) {
+      last = now
+      state.tick++
+      paint()
+      paintReference()
+    }
+    requestAnimationFrame(loop)
+  }
+  loop()
+
+  function take(file) {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const image = new Image()
+      image.onload = () => {
+        state.image = image
+        el('recut').disabled = false
+        el('drop').innerHTML = '<b>' + file.name + '</b><br />drop another to replace it'
+        run()
+      }
+      image.src = reader.result
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const drop = el('drop')
+  drop.addEventListener('dragover', (event) => { event.preventDefault(); drop.classList.add('over') })
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'))
+  drop.addEventListener('drop', (event) => {
+    event.preventDefault()
+    drop.classList.remove('over')
+    const file = event.dataTransfer.files[0]
+    if (file !== undefined) take(file)
+  })
+  el('file').addEventListener('change', (event) => {
+    const file = event.target.files[0]
+    if (file !== undefined) take(file)
+  })
+
+  el('recut').addEventListener('click', run)
+  el('outline').addEventListener('click', (event) => {
+    state.outline = !state.outline
+    event.currentTarget.classList.toggle('on', state.outline)
+    run()
+  })
+  for (const id of ['frames', 'height', 'colours']) {
+    el(id).addEventListener('change', run)
+  }
+  el('fps').addEventListener('input', (event) => {
+    state.fps = Number(event.target.value)
+    el('fpsNum').textContent = state.fps + ' fps'
+  })
+  el('zoom').addEventListener('input', (event) => {
+    state.zoom = Number(event.target.value)
+    el('zoomNum').textContent = state.zoom + '×'
+    sizeLive()
+    sizeReference()
+  })
+  for (const swatch of document.querySelectorAll('.swatch')) {
+    swatch.addEventListener('click', () => {
+      state.bg = swatch.dataset.bg
+      document.querySelectorAll('.swatch').forEach((other) => other.classList.toggle('on', other === swatch))
+      sizeLive()
+      sizeReference()
+    })
+  }
+
+  const save = (blob, name) => {
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = name
+    link.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
+  el('savePng').addEventListener('click', () => {
+    state.result.canvas.toBlob((blob) => save(blob, 'sheet.png'), 'image/png')
+  })
+  el('saveJson').addEventListener('click', () => {
+    const atlas = { image: 'sheet.png', ...state.result.atlas }
+    save(new Blob([JSON.stringify(atlas, null, 2)], { type: 'application/json' }), 'sheet.json')
+  })
+
+  say('Drop a sheet to begin.')
+})()
+</script>
+</body>
+</html>
