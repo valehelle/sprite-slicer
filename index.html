@@ -205,6 +205,34 @@
   }
 
   /**
+   * Splits the distance-from-key histogram into background and creature.
+   *
+   * Otsu's method, the standard way to cut a histogram with two humps in it,
+   * and it needs no threshold of its own. It replaces a hard-coded number
+   * that was wrong in both directions: too high and the fill walked through
+   * the creature and hollowed him out, too low and it stopped short on a
+   * sheet whose background was hot pink rather than magenta.
+   */
+  function splitAtKey(distance) {
+    const histogram = new Uint32Array(256)
+    for (const value of distance) histogram[value]++
+    let total = 0
+    for (let value = 0; value < 256; value++) total += value * histogram[value]
+    let behind = 0, weight = 0, best = 0, bestSpread = -1
+    for (let value = 0; value < 256; value++) {
+      weight += histogram[value]
+      if (weight === 0) continue
+      const ahead = distance.length - weight
+      if (ahead === 0) break
+      behind += value * histogram[value]
+      const gap = behind / weight - (total - behind) / ahead
+      const spread = weight * ahead * gap * gap
+      if (spread > bestSpread) { bestSpread = spread; best = value }
+    }
+    return best
+  }
+
+  /**
    * Clears the background and cleans up what it leaves behind.
    *
    * Three things happen, and all three matter. Alpha ramps with distance from
@@ -215,12 +243,6 @@
    */
   function dropBackground(bytes, w, h, key) {
     const MATCH = 45
-    const SOLID = 195
-    // How far from the key the fill may wander. Well below SOLID on purpose:
-    // SOLID is the top of the alpha ramp, and using it to decide where the
-    // fill may spread lets it walk through the creature — on a hot-pink sheet
-    // 96% of his pixels sat inside it and he was eaten from the inside out.
-    const FLOOD = 110
     const n = w * h
 
     const distance = new Uint8Array(n)
@@ -233,6 +255,7 @@
       ))
     }
 
+    const FLOOD = splitAtKey(distance)
     const outside = new Uint8Array(n)
     const queue = []
     const push = (p) => {
@@ -251,10 +274,35 @@
       if (p < w * (h - 1)) push(p + w)
     }
 
+    // Then take one more pixel off all the way round.
+    //
+    // Between the background and the creature lies the band where the artwork
+    // was anti-aliased into the key — pixels that are neither, and that no
+    // threshold separates, because the creature's own darkest tones are just
+    // as far from the key as they are. What separates them is shape: that
+    // band is a thread lying against the background, the creature is a mass.
+    // Shaving a pixel takes the thread and costs nothing, because the outline
+    // pass draws the edge back in afterwards.
+    const shaved = new Uint8Array(outside)
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const p = y * w + x
+        if (outside[p] === 1) continue
+        const touches =
+          (x > 0 && outside[p - 1] === 1) ||
+          (x < w - 1 && outside[p + 1] === 1) ||
+          (y > 0 && outside[p - w] === 1) ||
+          (y < h - 1 && outside[p + w] === 1)
+        if (touches) shaved[p] = 1
+      }
+    }
+    outside.set(shaved)
+
     for (let p = 0; p < n; p++) {
       if (outside[p] !== 1) continue
       const d = distance[p]
-      const alpha = d <= MATCH ? 0 : Math.round(((d - MATCH) / (SOLID - MATCH)) * 255)
+      const top = Math.max(MATCH + 1, FLOOD)
+      const alpha = d <= MATCH ? 0 : Math.min(255, Math.round(((d - MATCH) / (top - MATCH)) * 255))
       const i = p * 4
       bytes[i + 3] = Math.min(bytes[i + 3], alpha)
     }
@@ -265,8 +313,15 @@
     for (let i = 0; i < bytes.length; i += 4) {
       if (bytes[i + 3] === 0) continue
       const r = bytes[i], g = bytes[i + 1], b = bytes[i + 2]
-      if (key[0] > 200 && key[1] < 60 && key[2] > 200 && b > g) bytes[i + 2] = g
-      if (key[1] > 200 && key[0] < 60 && key[2] < 60 && g > Math.max(r, b)) bytes[i + 1] = Math.max(r, b)
+      // Tested against the family, not one exact colour: a sheet on hot pink
+      // rather than #FF00FF kept its cast because the old test wanted blue
+      // above 200 and pink only reaches 158.
+      const low = Math.min(key[0], key[1], key[2])
+      const magentaLike = key[1] === low && key[0] - low > 80 && key[2] - low > 80
+      const greenLike = key[1] === Math.max(key[0], key[1], key[2])
+        && key[1] - key[0] > 80 && key[1] - key[2] > 80
+      if (magentaLike && b > g) bytes[i + 2] = g
+      if (greenLike && g > Math.max(r, b)) bytes[i + 1] = Math.max(r, b)
     }
 
     bleedEdges(bytes, w, h)
