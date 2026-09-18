@@ -158,6 +158,7 @@
         <input type="number" id="colours" value="32" min="4" max="256" />
       </div>
       <div class="row">
+        <button id="pixelate" class="on">Pixelate</button>
         <button id="tween">In-betweens</button>
         <button id="outline">Close outline</button>
         <button id="recut" class="primary" disabled>Cut again</button>
@@ -244,6 +245,10 @@
         creature lies the band where the art was blended into the key, and no colour test separates it.
         One pixel usually takes it. Raise it if the edge looks dirty, drop it to 0 if thin details like a
         wisp of wind are disappearing.</li>
+      <li><b>Pixelate</b> — on, the frames are scaled down to the size the game draws them and snapped to
+        a small palette, which is what gives them hard edges and flat colour. Off, the drawing is kept as
+        it was made: full size, soft edges, every colour. Everything after the scaling — height, colours,
+        contrast and the outline — belongs to pixelating and is ignored when it is off.</li>
       <li><b>Contrast</b> — spreads the shading apart. Generated art tends to sit in one band of mid-tones
         where hand-drawn pixel art runs from near-white to near-black.</li>
     </ul>
@@ -801,7 +806,7 @@
    * model cannot be asked for an in-between, and a leg swinging across the
    * body is a case where you would not want one.
    */
-  function tweenFrames(a, b, w, h, palette) {
+  function tweenFrames(a, b, w, h, palette = []) {
     /**
      * The nearest colour the sheet already uses.
      *
@@ -850,8 +855,14 @@
       const k = i * 4
       if (litA[i] && litB[i]) {
         // Halfway between the two, then snapped to a colour the sheet has.
-        const j = snap((a[k] + b[k]) / 2, (a[k + 1] + b[k + 1]) / 2, (a[k + 2] + b[k + 2]) / 2)
-        out[k] = palette[j]; out[k + 1] = palette[j + 1]; out[k + 2] = palette[j + 2]
+        if (palette.length === 0) {
+          out[k] = (a[k] + b[k]) / 2
+          out[k + 1] = (a[k + 1] + b[k + 1]) / 2
+          out[k + 2] = (a[k + 2] + b[k + 2]) / 2
+        } else {
+          const j = snap((a[k] + b[k]) / 2, (a[k + 1] + b[k + 1]) / 2, (a[k + 2] + b[k + 2]) / 2)
+          out[k] = palette[j]; out[k + 1] = palette[j + 1]; out[k + 2] = palette[j + 2]
+        }
       } else if (litA[i]) {
         out[k] = a[k]; out[k + 1] = a[k + 1]; out[k + 2] = a[k + 2]
       } else if (litB[i]) {
@@ -966,21 +977,31 @@
 
     // Down to the size it is actually drawn at, and then made to look drawn
     // rather than shrunk: contrast, a dark rim, hard alpha, flat colour.
-    const factor = options.standHeight / standHeight
-    const outCellW = Math.max(1, Math.round(cellWidth * factor))
-    const outCellH = Math.max(1, Math.round(cellHeight * factor))
+    //
+    // All of which is skipped when the drawing is to be kept as it is. The
+    // pixelating exists because a sheet arrives as an illustration of a sprite
+    // — soft edges, thousands of colours, drawn far larger than the game shows
+    // it — and scaling it down to the size it is really seen at is what gives
+    // it hard edges and flat colour. If what you want is the picture itself,
+    // none of that applies: the frames come out at the size they were drawn,
+    // with their soft edges intact.
+    const factor = options.pixelate ? options.standHeight / standHeight : 1
+    const outCellW = options.pixelate ? Math.max(1, Math.round(cellWidth * factor)) : cellWidth
+    const outCellH = options.pixelate ? Math.max(1, Math.round(cellHeight * factor)) : cellHeight
     const dw = outCellW * options.frames
     const dh = outCellH * rows.length
-    const small = resample(sheetBytes, sheetW, sheetH, dw, dh)
+    const small = options.pixelate
+      ? resample(sheetBytes, sheetW, sheetH, dw, dh)
+      : sheetBytes
 
-    const k = options.contrast
+    const k = options.pixelate ? options.contrast : 1
     if (k !== 1) {
       for (let i = 0; i < small.length; i += 4) {
         for (let c = 0; c < 3; c++) small[i + c] = Math.round((small[i + c] - 128) * k + 128)
       }
     }
 
-    if (options.outline) {
+    if (options.outline && options.pixelate) {
       // Drawn inside the silhouette, on its outermost ring, and only where the
       // art has not already drawn one — so the rim is completed where it went
       // missing and never thickened where it is already there.
@@ -1001,10 +1022,16 @@
       small.set(out)
     }
 
-    // Alpha goes hard last: partial transparency is what the palette step
-    // turns into white speckle, and the dark rim already carries the edge.
-    for (let i = 3; i < small.length; i += 4) small[i] = small[i] >= 110 ? 255 : 0
-    quantise(small, options.colours)
+    // Alpha goes hard last, and the palette after it — partial transparency is
+    // what the palette step turns into white speckle, and by then the rim
+    // carries the edge anyway.
+    //
+    // Neither happens to a kept drawing: its soft edge and its full range of
+    // colour are the whole point of keeping it.
+    if (options.pixelate) {
+      for (let i = 3; i < small.length; i += 4) small[i] = small[i] >= 110 ? 255 : 0
+      quantise(small, options.colours)
+    }
 
     // Optional in-betweens, doubling every row.
     let cells = small
@@ -1036,11 +1063,13 @@
         }
       }
       // The colours the sheet settled on, so the in-betweens can only reuse
-      // them rather than adding any of their own.
+      // them rather than adding any of their own. A kept drawing has thousands
+      // and no palette to snap back to, so it blends freely instead.
       const seen = new Set()
       const palette = []
       for (let i = 0; i < small.length; i += 4) {
         if (small[i + 3] !== 255) continue
+        if (palette.length > 256 * 3) break
         const packed = (small[i] << 16) | (small[i + 1] << 8) | small[i + 2]
         if (seen.has(packed)) continue
         seen.add(packed)
@@ -1096,7 +1125,7 @@
   }
 
   const el = (id) => document.getElementById(id)
-  const state = { image: null, result: null, bg: '#3f6b32', fps: 4, zoom: 3, outline: false, autoKey: true, tween: false, tick: 0, held: [] }
+  const state = { image: null, result: null, bg: '#3f6b32', fps: 4, zoom: 3, outline: false, autoKey: true, pixelate: true, tween: false, tick: 0, held: [] }
 
   const say = (text, kind = '') => {
     el('status').textContent = text
@@ -1109,6 +1138,7 @@
       standHeight: Number(el('height').value),
       colours: Number(el('colours').value),
       contrast: Number(el('contrast').value),
+      pixelate: state.pixelate,
       outline: state.outline,
       outlineBelow: Number(el('outlineBelow').value),
       despeckle: Number(el('despeckle').value),
@@ -1368,6 +1398,15 @@
   })
 
   el('recut').addEventListener('click', run)
+  el('pixelate').addEventListener('click', (event) => {
+    state.pixelate = !state.pixelate
+    event.currentTarget.classList.toggle('on', state.pixelate)
+    // Nothing downstream of the scaling applies to a kept drawing.
+    for (const id of ['height', 'colours', 'outline', 'contrast', 'outlineBelow']) {
+      el(id).disabled = !state.pixelate
+    }
+    run()
+  })
   el('tween').addEventListener('click', (event) => {
     state.tween = !state.tween
     event.currentTarget.classList.toggle('on', state.tween)
