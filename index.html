@@ -756,7 +756,29 @@
    * model cannot be asked for an in-between, and a leg swinging across the
    * body is a case where you would not want one.
    */
-  function tweenFrames(a, b, w, h) {
+  function tweenFrames(a, b, w, h, palette) {
+    /**
+     * The nearest colour the sheet already uses.
+     *
+     * Averaging two palette colours lands between them, which is the right
+     * shade and the wrong colour: it belongs to neither frame and to no
+     * palette, and a body full of those is what reads as blur. Snapping the
+     * average back to the closest colour the sprite actually has keeps the
+     * shading honest and the flat colour intact.
+     */
+    const snap = (r, g, bl) => {
+      let best = 0
+      let bestGap = Infinity
+      for (let i = 0; i < palette.length; i += 3) {
+        const dr = palette[i] - r
+        const dg = palette[i + 1] - g
+        const db = palette[i + 2] - bl
+        const gap = dr * dr + dg * dg + db * db
+        if (gap < bestGap) { bestGap = gap; best = i }
+      }
+      return best
+    }
+
     const litA = new Uint8Array(w * h)
     const litB = new Uint8Array(w * h)
     for (let i = 0; i < w * h; i++) {
@@ -780,12 +802,12 @@
 
       // Colour from whichever frame has something here; both, and they meet
       // in the middle, which is what a hand-drawn in-between would do anyway.
-      // Never mixed. Averaging two pixels invents a colour that is in neither
-      // frame and in no palette, and doing it across every pixel where the
-      // two differ is what made the in-between look blurred. Taking one side
-      // whole keeps the flat colour that makes it read as pixel art.
       const k = i * 4
-      if (litA[i]) {
+      if (litA[i] && litB[i]) {
+        // Halfway between the two, then snapped to a colour the sheet has.
+        const j = snap((a[k] + b[k]) / 2, (a[k + 1] + b[k + 1]) / 2, (a[k + 2] + b[k + 2]) / 2)
+        out[k] = palette[j]; out[k + 1] = palette[j + 1]; out[k + 2] = palette[j + 2]
+      } else if (litA[i]) {
         out[k] = a[k]; out[k + 1] = a[k + 1]; out[k + 2] = a[k + 2]
       } else if (litB[i]) {
         out[k] = b[k]; out[k + 1] = b[k + 1]; out[k + 2] = b[k + 2]
@@ -969,12 +991,24 @@
           }
         }
       }
+      // The colours the sheet settled on, so the in-betweens can only reuse
+      // them rather than adding any of their own.
+      const seen = new Set()
+      const palette = []
+      for (let i = 0; i < small.length; i += 4) {
+        if (small[i + 3] !== 255) continue
+        const packed = (small[i] << 16) | (small[i + 1] << 8) | small[i + 2]
+        if (seen.has(packed)) continue
+        seen.add(packed)
+        palette.push(small[i], small[i + 1], small[i + 2])
+      }
+
       for (let r = 0; r < rows.length; r++) {
         for (let c = 0; c < options.frames; c++) {
           const here = read(c, r)
           const next = read((c + 1) % options.frames, r)
           write(here, c * 2, r)
-          write(tweenFrames(here, next, outCellW, outCellH), c * 2 + 1, r)
+          write(tweenFrames(here, next, outCellW, outCellH, palette), c * 2 + 1, r)
         }
       }
       // No second pass over the palette: the in-betweens only reuse colours
