@@ -70,7 +70,13 @@
   .rowbody { display: flex; gap: 14px; padding: 14px; align-items: center; flex-wrap: wrap; }
   .play { display: grid; place-items: center; border-radius: 8px; padding: 8px; }
   .strip { display: flex; gap: 6px; overflow-x: auto; flex: 1; min-width: 200px; }
-  .strip canvas { border-radius: 4px; }
+  .strip canvas { border-radius: 4px; cursor: pointer; border: 2px solid transparent; }
+  .strip canvas:hover { border-color: #4a4f52; }
+  .strip canvas.held { border-color: var(--accent); }
+  .frameNo { font-family: var(--mono); font-size: 11px; color: var(--faint); text-align: center; }
+  .cell { display: flex; flex-direction: column; gap: 3px; flex: 0 0 auto; }
+  .cell.held .frameNo { color: var(--accent); }
+  .rowplay { font-family: var(--mono); font-size: 11.5px; color: var(--faint); margin-left: auto; }
   canvas { image-rendering: pixelated; display: block; }
 
   .refTitle { font-size: 14px; margin: 0; font-weight: 620; }
@@ -796,7 +802,7 @@
   }
 
   const el = (id) => document.getElementById(id)
-  const state = { image: null, result: null, bg: '#3f6b32', fps: 4, zoom: 3, outline: true, tick: 0 }
+  const state = { image: null, result: null, bg: '#3f6b32', fps: 4, zoom: 3, outline: true, tick: 0, held: [] }
 
   const say = (text, kind = '') => {
     el('status').textContent = text
@@ -843,6 +849,7 @@
     const host = el('rows')
     host.textContent = ''
     const { atlas, canvas } = state.result
+    state.held = atlas.rows.map(() => null)
     atlas.rows.forEach((row, index) => {
       const card = document.createElement('section')
       card.className = 'rowcard'
@@ -867,9 +874,19 @@
       live.className = 'live'
       play.append(live)
 
+      // Clicking a frame holds the row on it, so a pose can be looked at
+      // rather than glimpsed. Clicking it again lets the row run.
+      const status = document.createElement('span')
+      status.className = 'rowplay'
+      status.textContent = 'playing'
+      head.append(status)
+
       const strip = document.createElement('div')
       strip.className = 'strip'
       for (let i = 0; i < row.frames; i++) {
+        const slot = document.createElement('div')
+        slot.className = 'cell'
+
         const cell = document.createElement('canvas')
         cell.width = atlas.cellWidth
         cell.height = atlas.cellHeight
@@ -879,7 +896,19 @@
         ctx.drawImage(canvas, i * atlas.cellWidth, index * atlas.cellHeight, atlas.cellWidth, atlas.cellHeight, 0, 0, atlas.cellWidth, atlas.cellHeight)
         cell.style.width = Math.round(atlas.cellWidth * 0.8) + 'px'
         cell.style.height = Math.round(atlas.cellHeight * 0.8) + 'px'
-        strip.append(cell)
+        cell.title = 'Frame ' + (i + 1)
+
+        const label = document.createElement('span')
+        label.className = 'frameNo'
+        label.textContent = String(i + 1)
+
+        slot.append(cell, label)
+        slot.addEventListener('click', () => {
+          state.held[index] = state.held[index] === i ? null : i
+          markHeld()
+          paint()
+        })
+        strip.append(slot)
       }
 
       body.append(play, strip)
@@ -887,6 +916,25 @@
       host.append(card)
     })
     sizeLive()
+    markHeld()
+  }
+
+  /** Shows which frame each row is holding on, if any. */
+  function markHeld() {
+    const cards = document.querySelectorAll('.rowcard')
+    cards.forEach((card, index) => {
+      const held = state.held[index]
+      const status = card.querySelector('.rowplay')
+      if (status !== null) {
+        status.textContent = held === null || held === undefined ? 'playing' : 'holding frame ' + (held + 1)
+      }
+      card.querySelectorAll('.cell').forEach((slot, i) => {
+        const on = held === i
+        slot.classList.toggle('held', on)
+        const canvas = slot.querySelector('canvas')
+        if (canvas !== null) canvas.classList.toggle('held', on)
+      })
+    })
   }
 
   function sizeLive() {
@@ -907,7 +955,8 @@
     const { atlas, canvas } = state.result
     for (const live of document.querySelectorAll('.live')) {
       const index = Number(live.dataset.row)
-      const column = state.tick % atlas.columns
+      const held = state.held[index]
+      const column = held === null || held === undefined ? state.tick % atlas.columns : held
       const ctx = live.getContext('2d')
       ctx.imageSmoothingEnabled = false
       ctx.clearRect(0, 0, live.width, live.height)
