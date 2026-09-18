@@ -203,7 +203,7 @@
         <input type="range" id="fps" min="0.5" max="12" step="0.5" value="4" />
         <span class="num" id="fpsNum">4 fps</span>
         <span class="label">zoom</span>
-        <input type="range" id="zoom" min="1" max="6" step="1" value="3" />
+        <input type="range" id="zoom" min="0.25" max="6" step="0.25" value="3" />
         <span class="num" id="zoomNum">3×</span>
       </div>
     </div>
@@ -1284,13 +1284,15 @@
     if (state.result === null) return
     const { atlas } = state.result
     for (const live of document.querySelectorAll('.live')) {
-      live.width = atlas.cellWidth * state.zoom
-      live.height = atlas.cellHeight * state.zoom
-      // Only the backing store is set here. How wide it is *shown* is left to
-      // CSS, which caps it at the panel — measuring the panel in script reads
-      // a width the canvas itself already inflated, so it never shrinks back.
-      live.style.width = ''
-      live.style.height = ''
+      // The canvas holds one cell, at its own size. Zoom only changes how
+      // large that is shown — as a multiplier it was useless on a kept
+      // drawing, whose cell is 294x432, so even 1x filled the panel and there
+      // was nothing below it. CSS scales it, so a quarter is as available as
+      // six times, and the panel still caps it.
+      live.width = atlas.cellWidth
+      live.height = atlas.cellHeight
+      live.style.width = Math.max(1, Math.round(atlas.cellWidth * state.zoom)) + 'px'
+      live.style.height = 'auto'
       live.parentElement.style.background = state.bg
     }
     paint()
@@ -1309,7 +1311,7 @@
       ctx.drawImage(
         canvas,
         column * atlas.cellWidth, index * atlas.cellHeight, atlas.cellWidth, atlas.cellHeight,
-        0, 0, atlas.cellWidth * state.zoom, atlas.cellHeight * state.zoom,
+        0, 0, atlas.cellWidth, atlas.cellHeight,
       )
     }
   }
@@ -1335,10 +1337,10 @@
 
   function sizeReference() {
     const live = el('refLive')
-    live.width = REFERENCE.cellWidth * state.zoom
-    live.height = REFERENCE.cellHeight * state.zoom
-    live.style.width = ''
-    live.style.height = ''
+    live.width = REFERENCE.cellWidth
+    live.height = REFERENCE.cellHeight
+    live.style.width = Math.max(1, Math.round(REFERENCE.cellWidth * state.zoom)) + 'px'
+    live.style.height = 'auto'
     el('refPlay').style.background = state.bg
     paintReference()
   }
@@ -1353,7 +1355,7 @@
     ctx.drawImage(
       reference,
       column * REFERENCE.cellWidth, 0, REFERENCE.cellWidth, REFERENCE.cellHeight,
-      0, 0, REFERENCE.cellWidth * state.zoom, REFERENCE.cellHeight * state.zoom,
+      0, 0, REFERENCE.cellWidth, REFERENCE.cellHeight,
     )
   }
 
