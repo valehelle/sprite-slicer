@@ -132,7 +132,7 @@
         <input type="number" id="colours" value="32" min="4" max="256" />
       </div>
       <div class="row">
-        <button id="outline" class="on">Outline</button>
+        <button id="outline">Add outline</button>
         <button id="recut" class="primary" disabled>Cut again</button>
       </div>
     </div>
@@ -171,6 +171,9 @@
       <li>A flat background the creature never uses — magenta is the convention. It is read from the corners, so it does not need to be exactly #FF00FF.</li>
       <li>Clear gaps between frames and between rows. Frames that touch are found as one.</li>
       <li>The same number of frames in every row.</li>
+      <li>Its own dark outline, which pixel art normally has. <b>Add outline</b> is for art that has none —
+        on art that already has one it draws a second rim over the first, worked out afresh from every
+        frame, so it lands differently each time and flickers as the loop plays.</li>
     </ul>
     <p class="note">
       Everything else is measured: where the rows sit, where each frame's edges are, and where the creature's
@@ -802,7 +805,7 @@
   }
 
   const el = (id) => document.getElementById(id)
-  const state = { image: null, result: null, bg: '#3f6b32', fps: 4, zoom: 3, outline: true, tick: 0, held: [] }
+  const state = { image: null, result: null, bg: '#3f6b32', fps: 4, zoom: 3, outline: false, tick: 0, held: [] }
 
   const say = (text, kind = '') => {
     el('status').textContent = text
