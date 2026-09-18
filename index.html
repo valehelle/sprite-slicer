@@ -20,7 +20,8 @@
     --bad: #e2705a;
     --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   }
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; min-width: 0; }
+  html, body { overflow-x: hidden; }
   body {
     margin: 0;
     background: var(--ground);
@@ -28,7 +29,7 @@
     font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   }
   .wrap { max-width: 1000px; margin: 0 auto; padding-inline: 16px; padding-block: 26px 72px; display: flex; flex-direction: column; gap: 18px; }
-  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; }
   h1 { font-size: 21px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
   .sub { color: var(--dim); font-size: 13px; margin: 0; }
   .meta { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-left: auto; }
@@ -68,9 +69,11 @@
   .rowhead { padding: 11px 14px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--line); }
   .rowhead h2 { font-size: 14px; margin: 0; font-weight: 620; }
   .rowhead .tag { font-family: var(--mono); font-size: 11px; color: var(--faint); }
-  .rowbody { display: flex; gap: 14px; padding: 14px; align-items: center; flex-wrap: wrap; }
-  .play { display: grid; place-items: center; border-radius: 8px; padding: 8px; }
-  .strip { display: flex; gap: 6px; overflow-x: auto; flex: 1; min-width: 200px; }
+  .rowbody { display: flex; gap: 14px; padding: 14px; align-items: flex-start; flex-wrap: wrap; }
+  .play { display: grid; place-items: center; border-radius: 8px; padding: 8px; flex: 1 1 320px; min-width: 0; }
+  .play canvas { max-width: 100%; height: auto; }
+  #refLive { max-width: 100%; height: auto; }
+  .strip { display: flex; gap: 6px; overflow-x: auto; flex: 1 1 260px; min-width: 0; padding-bottom: 4px; }
   .strip canvas { border-radius: 4px; cursor: pointer; border: 2px solid transparent; }
   .strip canvas:hover { border-color: #4a4f52; }
   .strip canvas.held { border-color: var(--accent); }
@@ -82,6 +85,28 @@
 
   .refTitle { font-size: 14px; margin: 0; font-weight: 620; }
   #refPanel { border-color: #3d4a34; }
+  @media (max-width: 640px) {
+    .wrap { padding-block: 16px 48px; gap: 12px; }
+    h1 { font-size: 18px; }
+    .meta { margin-left: 0; flex-basis: 100%; }
+    .sub { flex-basis: 100%; }
+    .rowhead { flex-wrap: wrap; gap: 4px 10px; }
+    .rowplay { margin-left: 0; }
+    /* Thumbnails scroll rather than stretching the page. */
+    .strip { max-width: 100%; }
+    /* Stacked, because two groups of controls side by side on a phone leaves
+       each of them one control wide and the labels wrapping between them. */
+    .row.spread { flex-direction: column; align-items: stretch; gap: 10px; }
+    .row.spread > .row { justify-content: flex-start; }
+    .rowbody { flex-direction: column; }
+    .play { width: 100%; flex: 0 0 auto; }
+    .strip { width: 100%; flex: 0 0 auto; }
+    input[type="range"] { flex: 1; width: auto; min-width: 90px; }
+    input[type="number"] { width: 58px; }
+    .drop { padding: 22px 14px; }
+    .refTitle { font-size: 13px; }
+  }
+
   .status { font-family: var(--mono); font-size: 12.5px; }
   .status.bad { color: var(--bad); }
   .status.good { color: var(--good); }
@@ -104,9 +129,9 @@
         <span class="label">for comparison</span>
         <h2 class="refTitle">Ragnarok Online — Desert Wolf, standing</h2>
       </div>
-      <span class="num">5 frames · 62px tall</span>
+      <span class="num" style="min-width: 0">5 frames · 62px tall</span>
     </div>
-    <div class="row" style="align-items: flex-start; gap: 14px;">
+    <div class="rowbody" style="padding: 0;">
       <div class="play" id="refPlay"><canvas id="refLive"></canvas></div>
       <div class="strip" id="refStrip"></div>
     </div>
@@ -133,6 +158,7 @@
         <input type="number" id="colours" value="32" min="4" max="256" />
       </div>
       <div class="row">
+        <button id="tween">In-betweens</button>
         <button id="outline">Add outline</button>
         <button id="recut" class="primary" disabled>Cut again</button>
       </div>
@@ -685,6 +711,112 @@
     }
   }
 
+
+  /**
+   * Distance from every pixel to the nearest lit one, by chamfer passes.
+   *
+   * Two sweeps, one down-and-right and one up-and-left, each pixel taking the
+   * best its already-visited neighbours can offer plus the step it took to
+   * get there. Not exact Euclidean distance, close enough to morph with, and
+   * it runs in two passes rather than a search per pixel.
+   */
+  function chamfer(lit, w, h) {
+    const FAR = 1e9
+    const d = new Float32Array(w * h)
+    for (let i = 0; i < w * h; i++) d[i] = lit[i] ? 0 : FAR
+    const near = (p, q, cost) => { const v = d[q] + cost; if (v < d[p]) d[p] = v }
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const p = y * w + x
+        if (x > 0) near(p, p - 1, 1)
+        if (y > 0) near(p, p - w, 1)
+        if (x > 0 && y > 0) near(p, p - w - 1, 1.414)
+        if (x < w - 1 && y > 0) near(p, p - w + 1, 1.414)
+      }
+    }
+    for (let y = h - 1; y >= 0; y--) {
+      for (let x = w - 1; x >= 0; x--) {
+        const p = y * w + x
+        if (x < w - 1) near(p, p + 1, 1)
+        if (y < h - 1) near(p, p + w, 1)
+        if (x < w - 1 && y < h - 1) near(p, p + w + 1, 1.414)
+        if (x > 0 && y < h - 1) near(p, p + w - 1, 1.414)
+      }
+    }
+    return d
+  }
+
+  /**
+   * A frame halfway between two others.
+   *
+   * Fading one into the other would show both at once — two beaks, a ghost of
+   * a wing — because a pixel either belongs to the creature or does not, and
+   * half-belonging is not a thing it can do. So the shapes are morphed rather
+   * than mixed: each frame becomes a field of how far every pixel lies inside
+   * or outside its silhouette, the two fields are averaged, and the new
+   * silhouette is wherever that average crosses zero. Colour is then taken
+   * from whichever frame actually has a pixel there.
+   *
+   * It carries small movements well and large ones badly, which is the right
+   * way round: a head turning a few pixels is exactly the case where an image
+   * model cannot be asked for an in-between, and a leg swinging across the
+   * body is a case where you would not want one.
+   */
+  function tweenFrames(a, b, w, h) {
+    const litA = new Uint8Array(w * h)
+    const litB = new Uint8Array(w * h)
+    for (let i = 0; i < w * h; i++) {
+      litA[i] = a[i * 4 + 3] === 255 ? 1 : 0
+      litB[i] = b[i * 4 + 3] === 255 ? 1 : 0
+    }
+    const holeA = new Uint8Array(w * h)
+    const holeB = new Uint8Array(w * h)
+    for (let i = 0; i < w * h; i++) { holeA[i] = 1 - litA[i]; holeB[i] = 1 - litB[i] }
+
+    const outA = chamfer(litA, w, h)
+    const inA = chamfer(holeA, w, h)
+    const outB = chamfer(litB, w, h)
+    const inB = chamfer(holeB, w, h)
+
+    const out = new Uint8ClampedArray(w * h * 4)
+    for (let i = 0; i < w * h; i++) {
+      const signedA = litA[i] ? -inA[i] : outA[i]
+      const signedB = litB[i] ? -inB[i] : outB[i]
+      if ((signedA + signedB) / 2 > 0) continue
+
+      // Colour from whichever frame has something here; both, and they meet
+      // in the middle, which is what a hand-drawn in-between would do anyway.
+      const k = i * 4
+      if (litA[i] && litB[i]) {
+        out[k] = (a[k] + b[k]) / 2
+        out[k + 1] = (a[k + 1] + b[k + 1]) / 2
+        out[k + 2] = (a[k + 2] + b[k + 2]) / 2
+      } else if (litA[i]) {
+        out[k] = a[k]; out[k + 1] = a[k + 1]; out[k + 2] = a[k + 2]
+      } else if (litB[i]) {
+        out[k] = b[k]; out[k + 1] = b[k + 1]; out[k + 2] = b[k + 2]
+      } else {
+        // In neither, but inside the morphed shape: borrow from close by.
+        let found = false
+        for (let r = 1; r <= 3 && !found; r++) {
+          for (let dy = -r; dy <= r && !found; dy++) {
+            for (let dx = -r; dx <= r && !found; dx++) {
+              const x = (i % w) + dx
+              const y = Math.floor(i / w) + dy
+              if (x < 0 || y < 0 || x >= w || y >= h) continue
+              const q = (y * w + x) * 4
+              if (a[q + 3] === 255) { out[k] = a[q]; out[k + 1] = a[q + 1]; out[k + 2] = a[q + 2]; found = true }
+              else if (b[q + 3] === 255) { out[k] = b[q]; out[k + 1] = b[q + 1]; out[k + 2] = b[q + 2]; found = true }
+            }
+          }
+        }
+        if (!found) continue
+      }
+      out[k + 3] = 255
+    }
+    return out
+  }
+
   /** The whole cut, from a decoded image to an atlas. */
   function slice(image, options) {
     const work = document.createElement('canvas')
@@ -814,10 +946,51 @@
     for (let i = 3; i < small.length; i += 4) small[i] = small[i] >= 110 ? 255 : 0
     quantise(small, options.colours)
 
+    // Optional in-betweens, doubling every row.
+    let cells = small
+    let columns = options.frames
+    if (options.tween && options.frames > 1) {
+      columns = options.frames * 2
+      const wide = outCellW * columns
+      cells = new Uint8ClampedArray(wide * dh * 4)
+      const read = (col, rowIndex) => {
+        const cell = new Uint8ClampedArray(outCellW * outCellH * 4)
+        for (let y = 0; y < outCellH; y++) {
+          for (let x = 0; x < outCellW; x++) {
+            const from = ((rowIndex * outCellH + y) * dw + col * outCellW + x) * 4
+            const to = (y * outCellW + x) * 4
+            cell[to] = small[from]; cell[to + 1] = small[from + 1]
+            cell[to + 2] = small[from + 2]; cell[to + 3] = small[from + 3]
+          }
+        }
+        return cell
+      }
+      const write = (cell, col, rowIndex) => {
+        for (let y = 0; y < outCellH; y++) {
+          for (let x = 0; x < outCellW; x++) {
+            const from = (y * outCellW + x) * 4
+            const to = ((rowIndex * outCellH + y) * wide + col * outCellW + x) * 4
+            cells[to] = cell[from]; cells[to + 1] = cell[from + 1]
+            cells[to + 2] = cell[from + 2]; cells[to + 3] = cell[from + 3]
+          }
+        }
+      }
+      for (let r = 0; r < rows.length; r++) {
+        for (let c = 0; c < options.frames; c++) {
+          const here = read(c, r)
+          const next = read((c + 1) % options.frames, r)
+          write(here, c * 2, r)
+          write(tweenFrames(here, next, outCellW, outCellH), c * 2 + 1, r)
+        }
+      }
+      quantise(cells, options.colours)
+    }
+
+    const finalW = outCellW * columns
     const final = document.createElement('canvas')
-    final.width = dw
+    final.width = finalW
     final.height = dh
-    final.getContext('2d').putImageData(new ImageData(small, dw, dh), 0, 0)
+    final.getContext('2d').putImageData(new ImageData(cells, finalW, dh), 0, 0)
 
     return {
       canvas: final,
@@ -825,8 +998,8 @@
       atlas: {
         cellWidth: outCellW,
         cellHeight: outCellH,
-        columns: options.frames,
-        rows: rows.map((row) => ({ name: row.name, frames: row.frames.length })),
+        columns,
+        rows: rows.map((row) => ({ name: row.name, frames: columns })),
         anchorX: Math.round(anchorX * factor),
         anchorY: Math.round(anchorY * factor),
         standHeight: Math.round(standHeight * factor),
@@ -849,7 +1022,7 @@
   }
 
   const el = (id) => document.getElementById(id)
-  const state = { image: null, result: null, bg: '#3f6b32', fps: 4, zoom: 3, outline: false, autoKey: true, tick: 0, held: [] }
+  const state = { image: null, result: null, bg: '#3f6b32', fps: 4, zoom: 3, outline: false, autoKey: true, tween: false, tick: 0, held: [] }
 
   const say = (text, kind = '') => {
     el('status').textContent = text
@@ -863,6 +1036,7 @@
       colours: Number(el('colours').value),
       contrast: Number(el('contrast').value),
       outline: state.outline,
+      tween: state.tween,
       tolerance: Number(el('tolerance').value),
       shave: Number(el('shave').value),
       // Null means read it off the corners; a colour means use this exactly.
@@ -1005,8 +1179,11 @@
     for (const live of document.querySelectorAll('.live')) {
       live.width = atlas.cellWidth * state.zoom
       live.height = atlas.cellHeight * state.zoom
-      live.style.width = live.width + 'px'
-      live.style.height = live.height + 'px'
+      // Only the backing store is set here. How wide it is *shown* is left to
+      // CSS, which caps it at the panel — measuring the panel in script reads
+      // a width the canvas itself already inflated, so it never shrinks back.
+      live.style.width = ''
+      live.style.height = ''
       live.parentElement.style.background = state.bg
     }
     paint()
@@ -1053,8 +1230,8 @@
     const live = el('refLive')
     live.width = REFERENCE.cellWidth * state.zoom
     live.height = REFERENCE.cellHeight * state.zoom
-    live.style.width = live.width + 'px'
-    live.style.height = live.height + 'px'
+    live.style.width = ''
+    live.style.height = ''
     el('refPlay').style.background = state.bg
     paintReference()
   }
@@ -1115,6 +1292,11 @@
   })
 
   el('recut').addEventListener('click', run)
+  el('tween').addEventListener('click', (event) => {
+    state.tween = !state.tween
+    event.currentTarget.classList.toggle('on', state.tween)
+    run()
+  })
   el('outline').addEventListener('click', (event) => {
     state.outline = !state.outline
     event.currentTarget.classList.toggle('on', state.outline)
