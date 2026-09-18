@@ -326,23 +326,17 @@
     // Otsu decides where the background ends; `tolerance` nudges that by hand
     // for the sheets where it guesses a little shy or a little greedy.
     const FLOOD = Math.max(4, Math.min(240, splitAtKey(distance) + tolerance))
+    // Everything close enough to the key goes, wherever it is.
+    //
+    // This used to spread inward from the border only, so that a pale area
+    // enclosed by the creature could not be punched through. Against a key
+    // the creature never uses that caution costs more than it saves: the gaps
+    // between a bird's feathers are background the border cannot reach, and
+    // they survived as flecks of magenta — which de-spill then turned bright
+    // red, since magenta with its blue pulled down to green is red. Four
+    // thousand of them on one sheet.
     const outside = new Uint8Array(n)
-    const queue = []
-    const push = (p) => {
-      if (outside[p] === 1 || distance[p] > FLOOD) return
-      outside[p] = 1
-      queue.push(p)
-    }
-    for (let x = 0; x < w; x++) { push(x); push((h - 1) * w + x) }
-    for (let y = 0; y < h; y++) { push(y * w); push(y * w + w - 1) }
-    while (queue.length > 0) {
-      const p = queue.pop()
-      const x = p % w
-      if (x > 0) push(p - 1)
-      if (x < w - 1) push(p + 1)
-      if (p >= w) push(p - w)
-      if (p < w * (h - 1)) push(p + w)
-    }
+    for (let p = 0; p < n; p++) if (distance[p] <= FLOOD) outside[p] = 1
 
     // Then take one more pixel off all the way round.
     //
@@ -786,12 +780,12 @@
 
       // Colour from whichever frame has something here; both, and they meet
       // in the middle, which is what a hand-drawn in-between would do anyway.
+      // Never mixed. Averaging two pixels invents a colour that is in neither
+      // frame and in no palette, and doing it across every pixel where the
+      // two differ is what made the in-between look blurred. Taking one side
+      // whole keeps the flat colour that makes it read as pixel art.
       const k = i * 4
-      if (litA[i] && litB[i]) {
-        out[k] = (a[k] + b[k]) / 2
-        out[k + 1] = (a[k + 1] + b[k + 1]) / 2
-        out[k + 2] = (a[k + 2] + b[k + 2]) / 2
-      } else if (litA[i]) {
+      if (litA[i]) {
         out[k] = a[k]; out[k + 1] = a[k + 1]; out[k + 2] = a[k + 2]
       } else if (litB[i]) {
         out[k] = b[k]; out[k + 1] = b[k + 1]; out[k + 2] = b[k + 2]
@@ -983,7 +977,9 @@
           write(tweenFrames(here, next, outCellW, outCellH), c * 2 + 1, r)
         }
       }
-      quantise(cells, options.colours)
+      // No second pass over the palette: the in-betweens only reuse colours
+      // that are already in the frames they came from, and quantising twice
+      // would shift every colour a little on the way through.
     }
 
     const finalW = outCellW * columns
