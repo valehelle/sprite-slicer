@@ -158,7 +158,7 @@
         <input type="number" id="colours" value="32" min="4" max="256" />
       </div>
       <div class="row">
-        <button id="pixelate" class="on">Pixelate</button>
+        <button id="keepDrawing">Keep drawing</button>
         <button id="tween">In-betweens</button>
         <button id="outline">Close outline</button>
         <button id="recut" class="primary" disabled>Cut again</button>
@@ -245,10 +245,11 @@
         creature lies the band where the art was blended into the key, and no colour test separates it.
         One pixel usually takes it. Raise it if the edge looks dirty, drop it to 0 if thin details like a
         wisp of wind are disappearing.</li>
-      <li><b>Pixelate</b> — on, the frames are scaled down to the size the game draws them and snapped to
-        a small palette, which is what gives them hard edges and flat colour. Off, the drawing is kept as
-        it was made: full size, soft edges, every colour. Everything after the scaling — height, colours,
-        contrast and the outline — belongs to pixelating and is ignored when it is off.</li>
+      <li><b>Keep drawing</b> — normally the frames are scaled down to the size the game draws them and
+        snapped to a small palette, which is what gives them hard edges and flat colour. Turn this on and
+        the drawing comes through as it was made instead: full size, soft edges, every colour. Everything
+        after the scaling — height, colours, contrast and the outline — belongs to pixelating and is
+        ignored while it is on.</li>
       <li><b>Contrast</b> — spreads the shading apart. Generated art tends to sit in one band of mid-tones
         where hand-drawn pixel art runs from near-white to near-black.</li>
     </ul>
@@ -1398,9 +1399,9 @@
   })
 
   el('recut').addEventListener('click', run)
-  el('pixelate').addEventListener('click', (event) => {
+  el('keepDrawing').addEventListener('click', (event) => {
     state.pixelate = !state.pixelate
-    event.currentTarget.classList.toggle('on', state.pixelate)
+    event.currentTarget.classList.toggle('on', !state.pixelate)
     // Nothing downstream of the scaling applies to a kept drawing.
     for (const id of ['height', 'colours', 'outline', 'contrast', 'outlineBelow']) {
       el(id).disabled = !state.pixelate
